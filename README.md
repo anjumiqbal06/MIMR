@@ -26,4 +26,4 @@ python3.6 test_TinyImageNet.py --model_path model.pth --out_dir ./output/ --data
 ```
 
 ## Trained Models
-> The Trained models will be uploaded soon
+> The Trained models will be available soon
