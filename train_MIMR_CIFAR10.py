@@ -1,9 +1,13 @@
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import torch.utils.data as data
 import argparse
 import copy
-import logging
+import torch.nn.functional as F
 import os
 import time
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -14,71 +18,69 @@ from CIFAR10_Models import *
 from utils_1 import *
 from Feature_model.feature_resnet import *
 from torchvision import datasets, transforms
-import torch.nn.functional as F
-
+import logging
 
 logger = logging.getLogger(__name__)
 
-def get_args():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--data-dir', default='CIFAR10', type=str)
-    parser.add_argument('--batch-size', default=128, type=int)
-    parser.add_argument('--epochs', default=110, type=int)
-    parser.add_argument('--lr-schedule', default='multistep', choices=['cyclic', 'multistep'])
-    parser.add_argument('--weight-decay', default=5e-4, type=float)
-    parser.add_argument('--momentum', default=0.9, type=float)
-    parser.add_argument('--model', default='ResNet18', type=str, help='model name')
-    parser.add_argument('--epsilon', default=8, type=int)
-    parser.add_argument('--lr-min', default=0., type=float)
-    parser.add_argument('--lr-max', default=0.1, type=float)
-    parser.add_argument('--c_num', default=0.125, type=float)
-    parser.add_argument('--EMA_value', default=0.82, type=float)
-    parser.add_argument('--alpha', default=8, type=float, help='Step size')
-    parser.add_argument('--delta-init', default='random', choices=['zero', 'random', 'previous', 'normal'],
+def parse_arguments():
+    config_parser = argparse.ArgumentParser()
+    config_parser.add_argument('--data-dir', default='CIFAR10', type=str)
+    config_parser.add_argument('--batch-size', default=128, type=int)
+    config_parser.add_argument('--epochs', default=110, type=int)
+    config_parser.add_argument('--lr-schedule', default='multistep', choices=['cyclic', 'multistep'])
+    config_parser.add_argument('--weight-decay', default=5e-4, type=float)
+    config_parser.add_argument('--momentum', default=0.9, type=float)
+    config_parser.add_argument('--model', default='ResNet18', type=str, help='model name')
+    config_parser.add_argument('--epsilon', default=8, type=int)
+    config_parser.add_argument('--lr-min', default=0., type=float)
+    config_parser.add_argument('--lr-max', default=0.1, type=float)
+    config_parser.add_argument('--c_num', default=0.125, type=float)
+    config_parser.add_argument('--EMA_value', default=0.82, type=float)
+    config_parser.add_argument('--alpha', default=8, type=float, help='Step size')
+    config_parser.add_argument('--delta-init', default='random', choices=['zero', 'random', 'previous', 'normal'],
                         help='Perturbation initialization method')
-    parser.add_argument('--out_dir', default='output', type=str, help='Output directory')
-    parser.add_argument('--seed', default=0, type=int, help='Random seed')
-    parser.add_argument('--normal_mean', default=0, type=float, help='normal_mean')
-    parser.add_argument('--normal_std', default=1, type=float, help='normal_std')
-    parser.add_argument('--lamda', default=12, type=float, help='Label Smoothing')
-    parser.add_argument('--early-stop', action='store_true', help='Early stop if overfitting occurs')
-    parser.add_argument('--n_holes', type=int, default=1, help='number of holes to cut out from image')
-    parser.add_argument('--factor', default=0.7, type=float)
-    parser.add_argument('--length', type=int, default=4, help='length of the holes')
-   
-    parser.add_argument('--max-norm', default=1.0, type=float, help='Maximum norm value for regularization')
-    return parser.parse_args()
+    config_parser.add_argument('--out_dir', default='output', type=str, help='Output directory')
+    config_parser.add_argument('--seed', default=0, type=int, help='Random seed')
+    config_parser.add_argument('--normal_mean', default=0, type=float, help='normal_mean')
+    config_parser.add_argument('--normal_std', default=1, type=float, help='normal_std')
+    config_parser.add_argument('--lamda', default=12, type=float, help='Label Smoothing')
+    config_parser.add_argument('--early-stop', action='store_true', help='Early stop if overfitting occurs')
+    config_parser.add_argument('--n_holes', type=int, default=1, help='number of holes to cut out from image')
+    config_parser.add_argument('--factor', default=0.7, type=float)
+    config_parser.add_argument('--length', type=int, default=4, help='length of the holes')
+    config_parser.add_argument('--max-norm', default=1.0, type=float, help='Maximum norm value for regularization')
+    return config_parser.parse_args()
 
-args = get_args()
+config = parse_arguments()
 
 def get_loaders_cutout(dir_, batch_size):
-    train_transform = transforms.Compose([
+    train_transforms = transforms.Compose([
         transforms.RandomCrop(32, padding=4),
         transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
         transforms.Normalize(cifar10_mean, cifar10_std),
     ])
-    test_transform = transforms.Compose([
+    test_transforms = transforms.Compose([
         transforms.ToTensor(),
         transforms.Normalize(cifar10_mean, cifar10_std),
     ])
-    train_transform.transforms.append(Cutout(n_holes=args.n_holes, length=args.length))
+    train_transforms.transforms.append(Cutout(n_holes=config.n_holes, length=config.length))
 
     num_workers = 0
-    train_dataset = datasets.CIFAR10(
-        dir_, train=True, transform=train_transform, download=True)
-    test_dataset = datasets.CIFAR10(
-        dir_, train=False, transform=test_transform, download=True)
+    train_data = datasets.CIFAR10(
+        dir_, train=True, transform=train_transforms, download=True)
+    test_data = datasets.CIFAR10(
+        dir_, train=False, transform=test_transforms, download=True)
     train_loader = torch.utils.data.DataLoader(
-        dataset=train_dataset,
-        batch_size=batch_size,
+        dataset=train_data,
+       batch_size=batch_size,
         shuffle=True,
         pin_memory=True,
         num_workers=num_workers,
         drop_last=True 
     )
     test_loader = torch.utils.data.DataLoader(
-        dataset=test_dataset,
+        dataset=test_data,
         batch_size=batch_size,
         shuffle=False,
         pin_memory=True,
@@ -89,45 +91,47 @@ def get_loaders_cutout(dir_, batch_size):
 import numpy as np
 from torch.autograd import Variable
 
-def _label_smoothing(label, factor):
-    one_hot = np.eye(10)[label.cuda().data.cpu().numpy()]
-    result = one_hot * factor + (one_hot - 1.) * ((factor - 1) / float(10 - 1))
-    return result
+def compute_smoothed_labels(target_labels, smoothing_factor):
+    one_hot_encoded = np.eye(10)[target_labels.cuda().data.cpu().numpy()]
+    smoothed_labels = one_hot_encoded * smoothing_factor + (one_hot_encoded - 1.) * ((smoothing_factor - 1) / float(10 - 1))
+    return smoothed_labels
 
-def LabelSmoothLoss(input, target):
-    log_prob = F.log_softmax(input, dim=-1)
-    loss = (-target * log_prob).sum(dim=-1).mean()
-    return loss
+def compute_smoothed_loss(model_input, target):
+    log_probs = F.log_softmax(model_input, dim=-1)
+    loss_value = (-target * log_probs).sum(dim=-1).mean()
+    return loss_value
 
-class EMA(object):
+class ExponentialMovingAverage(object):
     def __init__(self, model, alpha=0.999, buffer_ema=True):
-        self.step = 0
+        self.step_counter = 0
         self.model = copy.deepcopy(model)
-        self.alpha = alpha
-        self.buffer_ema = buffer_ema
-        self.shadow = self.get_model_state()
-        self.backup = {}
-        self.param_keys = [k for k, _ in self.model.named_parameters()]
-        self.buffer_keys = [k for k, _ in self.model.named_buffers()]
+        self.decay_factor = alpha
+        self.use_buffer_ema = buffer_ema
+        self.shadow_state = self.get_model_state()
+        self.backup_state = {}
+        self.param_names = [k for k, _ in self.model.named_parameters()]
+        self.buffer_names = [k for k, _ in self.model.named_buffers()]
 
-    def update_params(self, model):
-        decay = min(self.alpha, (self.step + 1) / (self.step + 10))
-        state = model.state_dict()
-        for name in self.param_keys:
-            self.shadow[name].copy_(decay * self.shadow[name] + (1 - decay) * state[name])
-        for name in self.buffer_keys:
-            if self.buffer_ema:
-                self.shadow[name].copy_(decay * self.shadow[name] + (1 - decay) * state[name])
+    def update_parameters(self, model):
+        current_decay = min(self.decay_factor, (self.step_counter + 1) / (self.step_counter + 10))
+        model_state = model.state_dict()
+        for name in self.param_names:
+            self.shadow_state[name].copy_(
+                current_decay * self.shadow_state[name] + (1 - current_decay) * model_state[name])
+        for name in self.buffer_names:
+            if self.use_buffer_ema:
+                self.shadow_state[name].copy_(
+                    current_decay * self.shadow_state[name] + (1 - current_decay) * model_state[name])
             else:
-                self.shadow[name].copy_(state[name])
-        self.step += 1
+                self.shadow_state[name].copy_(model_state[name])
+        self.step_counter += 1
 
-    def apply_shadow(self):
-        self.backup = self.get_model_state()
-        self.model.load_state_dict(self.shadow)
+    def apply_shadow_weights(self):
+        self.backup_state = self.get_model_state()
+        self.model.load_state_dict(self.shadow_state)
 
-    def restore(self):
-        self.model.load_state_dict(self.backup)
+    def restore_original_weights(self):
+        self.model.load_state_dict(self.backup_state)
 
     def get_model_state(self):
         return {
@@ -135,221 +139,207 @@ class EMA(object):
             for k, v in self.model.state_dict().items()
         }
 
-def main():
-    args = get_args()
-    output_path = os.path.join(args.out_dir, 'Ours')
-    output_path = os.path.join(output_path, 'epsilon_' + str(args.epsilon))
-    output_path = os.path.join(output_path, 'alpha_' + str(args.alpha))
-    output_path = os.path.join(output_path, 'model_' + str(args.model))
-    output_path = os.path.join(output_path, 'factor_' + str(args.factor))
-    output_path = os.path.join(output_path, 'length_' + str(args.length))
-    output_path = os.path.join(output_path, 'EMA_value_' + str(args.EMA_value))
-    output_path = os.path.join(output_path, 'lamda_' + str(args.lamda))
+def execute_training():
+    config = parse_arguments()
+    output_directory = os.path.join(config.out_dir, 'Ours')
+    output_directory = os.path.join(output_directory, 'epsilon_' + str(config.epsilon))
+    output_directory = os.path.join(output_directory, 'alpha_' + str(config.alpha))
+    output_directory = os.path.join(output_directory, 'model_' + str(config.model))
+    output_directory = os.path.join(output_directory, 'factor_' + str(config.factor))
+    output_directory = os.path.join(output_directory, 'length_' + str(config.length))
+    output_directory = os.path.join(output_directory, 'EMA_value_' + str(config.EMA_value))
+    output_directory = os.path.join(output_directory, 'lamda_' + str(config.lamda))
 
-    if not os.path.exists(output_path):
-        os.makedirs(output_path)
-    logfile = os.path.join(output_path, 'output.log')
-    if os.path.exists(logfile):
-        os.remove(logfile)
+    if not os.path.exists(output_directory):
+        os.makedirs(output_directory)
+    log_path = os.path.join(output_directory, 'output.log')
+    if os.path.exists(log_path):
+        os.remove(log_path)
 
     logging.basicConfig(
         format='[%(asctime)s] - %(message)s',
         datefmt='%Y/%m/%d %H:%M:%S',
         level=logging.INFO,
-        filename=os.path.join(output_path, 'output.log'))
-    logger.info(args)
+        filename=os.path.join(output_directory, 'output.log'))
+    logger.info(config)
 
-    np.random.seed(args.seed)
-    torch.manual_seed(args.seed)
-    torch.cuda.manual_seed(args.seed)
+    np.random.seed(config.seed)
+    torch.manual_seed(config.seed)
+    torch.cuda.manual_seed(config.seed)
 
-    train_loader, test_loader = get_loaders_cutout(args.data_dir, args.batch_size)
+    train_loader, test_loader = get_loaders_cutout(config.data_dir, config.batch_size)
 
-    epsilon = (args.epsilon / 255.) / std
-    alpha = (args.alpha / 255.) / std
+    eps_value = (config.epsilon / 255.) / std
+    alpha_value = (config.alpha / 255.) / std
 
     print('==> Building model..')
     logger.info('==> Building model..')
-    if args.model == "VGG":
+    if config.model == "VGG":
         model = VGG('VGG19')
-    elif args.model == "ResNet18":
+    elif config.model == "ResNet18":
         model = Feature_ResNet18()
-    elif args.model == "PreActResNest18":
+    elif config.model == "PreActResNest18":
         model = PreActResNet18()
-    elif args.model == "WideResNet":
+    elif config.model == "WideResNet":
         model = WideResNet()
     model = model.cuda()
     model.train()
-    teacher_model = EMA(model)
-    opt = torch.optim.SGD(model.parameters(), lr=args.lr_max, momentum=args.momentum, weight_decay=args.weight_decay)
+    teacher_model = ExponentialMovingAverage(model)
+    optimizer = torch.optim.SGD(model.parameters(), lr=config.lr_max, momentum=config.momentum, weight_decay=config.weight_decay)
 
-    criterion = nn.CrossEntropyLoss()
-    delta = torch.zeros(args.batch_size, 3, 32, 32).cuda()
-    if args.delta_init == 'previous':
-         delta = torch.zeros_like(delta).cuda()
+    perturbation = torch.zeros(config.batch_size, 3, 32, 32).cuda()
+    if config.delta_init == 'previous':
+         perturbation = torch.zeros_like(perturbation).cuda()
 
     # Initialize momentum buffer for delta
-    momentum_buffer = torch.zeros_like(delta).cuda()
+    grad_momentum = torch.zeros_like(perturbation).cuda()
 
-    lr_steps = args.epochs * len(train_loader)
-    if args.lr_schedule == 'cyclic':
-        scheduler = torch.optim.lr_scheduler.CyclicLR(opt, base_lr=args.lr_min, max_lr=args.lr_max,
-                                                      step_size_up=lr_steps / 2, step_size_down=lr_steps / 2)
-    elif args.lr_schedule == 'multistep':
-        scheduler = torch.optim.lr_scheduler.MultiStepLR(opt, milestones=[lr_steps * 99 / 110, lr_steps * 104 / 110],
+    total_steps = config.epochs * len(train_loader)
+    if config.lr_schedule == 'cyclic':
+        lr_scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer, base_lr=config.lr_min, max_lr=config.lr_max,
+                                                      step_size_up=total_steps / 2, step_size_down=total_steps / 2)
+    elif config.lr_schedule == 'multistep':
+        lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[total_steps * 99 / 110, total_steps * 104 / 110],
                                                          gamma=0.1)
 
-    prev_robust_acc = 0.
-    logger.info('Epoch \t Seconds \t LR \t \t Train Loss \t Train Acc')
-    best_result = 0
     epoch_train_clean_list = []
     epoch_train_pgd_list = []
     epoch_clean_list = []
     epoch_pgd_list = []
-    init_loss = []
-    init_acc = []
-    final_loss = []
-    final_acc = []
-    for epoch in range(args.epochs):
-        epoch_time = 0
-        train_loss = 0
-        train_acc = 0
-        init_train_loss = 0
-        init_train_acc = 0
-        train_n = 0
+    initial_loss = []
+    initial_accuracy = []
+    training_loss = []
+    training_accuracy = []
+    best_accuracy = 0
+    for epoch_index in range(config.epochs):
+        epoch_duration = 0
+        total_loss = 0
+        total_accuracy = 0
+        initial_batch_loss = 0
+        initial_batch_accuracy = 0
+        samples_processed = 0
         teacher_model.model.eval()
-        for i, (X, y) in enumerate(train_loader):
-            batch_start_time = time.time()
-            X, y = X.cuda(), y.cuda()
-            if i == 0:
-                first_batch = (X, y)
-            if args.delta_init != 'previous':
-                delta = torch.zeros_like(X).cuda()
-            if args.delta_init == 'random':
-                for j in range(len(epsilon)):
-                    delta[:, j, :, :].uniform_(-epsilon[j][0][0].item(), epsilon[j][0][0].item())
-                delta.data = clamp(delta, lower_limit - X, upper_limit - X)
+        for batch_index, (input_data, target_labels) in enumerate(train_loader):
+            batch_start = time.time()
+            input_data, target_labels = input_data.cuda(), target_labels.cuda()
+            if batch_index == 0:
+                first_batch_data = (input_data, target_labels)
+            if config.delta_init != 'previous':
+                perturbation = torch.zeros_like(input_data).cuda()
+            if config.delta_init == 'random':
+                for j in range(len(eps_value)):
+                    perturbation[:, j, :, :].uniform_(-eps_value[j][0][0].item(), eps_value[j][0][0].item())
+                perturbation.data = clamp(perturbation, lower_limit - input_data, upper_limit - input_data)
 
-            delta = epsilon / 2 * torch.sign(delta)
-            delta.data = clamp(delta, lower_limit - X, upper_limit - X)
-            delta.requires_grad = True
+            perturbation = eps_value / 2 * torch.sign(perturbation)
+            perturbation.data = clamp(perturbation, lower_limit - input_data, upper_limit - input_data)
+            perturbation.requires_grad = True
 
-            adv_output, ori_fea_output = model(X + delta[:X.size(0)])
-            temp_delta = delta.clone().detach()
+            adv_output, original_features = model(input_data + perturbation[:input_data.size(0)])
+            perturbation_clone = perturbation.clone().detach()
             adv_output = torch.nn.Softmax(dim=1)(adv_output)
-            ori_fea_output = torch.nn.Softmax(dim=1)(ori_fea_output)
+            original_features = torch.nn.Softmax(dim=1)(original_features)
 
-            loss = F.cross_entropy(adv_output, y)
+            loss_value = F.cross_entropy(adv_output, target_labels)
 
-            adv_output, ori_fea_output = model(X)
+            adv_output, original_features = model(input_data)
 
             adv_output = torch.nn.Softmax(dim=1)(adv_output)
-            ori_fea_output = torch.nn.Softmax(dim=1)(ori_fea_output)
+            original_features = torch.nn.Softmax(dim=1)(original_features)
 
-            init_train_loss += loss.item() * y.size(0)
-            init_train_acc += (adv_output.max(1)[1] == y).sum().item()
+            initial_batch_loss += loss_value.item() * target_labels.size(0)
+            initial_batch_accuracy += (adv_output.max(1)[1] == target_labels).sum().item()
 
-            loss.backward(retain_graph=True)
-            grad = delta.grad.detach()
-            delta.data = clamp(delta + alpha * torch.sign(grad), -epsilon, epsilon)
-            delta.data[:X.size(0)] = clamp(delta[:X.size(0)], lower_limit - X, upper_limit - X)
+            loss_value.backward(retain_graph=True)
+            perturbation_gradient = perturbation.grad.detach()
+            perturbation.data = clamp(perturbation + alpha_value * torch.sign(perturbation_gradient), -eps_value, eps_value)
+            perturbation.data[:input_data.size(0)] = clamp(perturbation[:input_data.size(0)], lower_limit - input_data, upper_limit - input_data)
 
             # Update delta using momentum
-            if momentum_buffer.size(0) != grad.size(0):
-              momentum_buffer = momentum_buffer[:grad.size(0)] 
-            momentum_buffer = args.momentum * momentum_buffer + (1 - args.momentum) * grad
-            delta = delta + alpha * momentum_buffer
+            if grad_momentum.size(0) != perturbation_gradient.size(0):
+              grad_momentum = grad_momentum[:perturbation_gradient.size(0)] 
+            grad_momentum = config.momentum * grad_momentum + (1 - config.momentum) * perturbation_gradient
+            perturbation = perturbation + alpha_value * grad_momentum
 
-            delta.data = clamp(delta, lower_limit - X, upper_limit - X)  # Ensure delta stays within bounds
-            delta = delta.detach()
+            perturbation.data = clamp(perturbation, lower_limit - input_data, upper_limit - input_data)
+            perturbation = perturbation.detach()
 
-            ori_output, fea_output = model(X + delta[:X.size(0)])
-            output = torch.nn.Softmax(dim=1)(ori_output)
-            fea_output = torch.nn.Softmax(dim=1)(fea_output)
+            model_output, feature_output = model(input_data + perturbation[:input_data.size(0)])
+            output_probs = torch.nn.Softmax(dim=1)(model_output)
+            feature_probs = torch.nn.Softmax(dim=1)(feature_output)
 
-            loss_fn = torch.nn.MSELoss(reduce=True, size_average=True)
-            label_smoothing = Variable(torch.tensor(_label_smoothing(y, args.factor)).cuda())
+            loss_function = torch.nn.MSELoss(reduce=True, size_average=True)
+            smoothed_targets = Variable(torch.tensor(compute_smoothed_labels(target_labels, config.factor)).cuda())
 
-            loss = LabelSmoothLoss(ori_output, label_smoothing.float()) + args.lamda * (loss_fn(output.float(), adv_output.float())+loss_fn(fea_output.float(), ori_fea_output.float()))/(loss_fn((X + delta[:X.size(0)]).float(), (X).float())+0.125)
+            loss_value = compute_smoothed_loss(model_output, smoothed_targets.float()) + config.lamda * (loss_function(output_probs.float(), adv_output.float())+loss_function(feature_probs.float(), original_features.float()))/(loss_function((input_data + perturbation[:input_data.size(0)]).float(), (input_data).float())+0.125)
 
-            opt.zero_grad()
-            loss.backward()
+            optimizer.zero_grad()
+            loss_value.backward()
 
-            # Apply Max-Norm Regularization here
-            for name, param in model.named_parameters():
-                if 'weight' in name:
-                    torch.nn.utils.clip_grad_norm_(param, args.max_norm)
+            # Apply Max-Norm Regularization
+            for param_name, param_val in model.named_parameters():
+                if 'weight' in param_name:
+                    torch.nn.utils.clip_grad_norm_(param_val, config.max_norm)
 
-            opt.step()
+            optimizer.step()
 
-            train_loss += loss.item() * y.size(0)
-            train_acc += (ori_output.max(1)[1] == y).sum().item()
-            adv_acc = (output.max(1)[1] == y).sum().item()
-            clean_acc = (adv_output.max(1)[1] == y).sum().item()
-            train_n += y.size(0)
+            total_loss += loss_value.item() * target_labels.size(0)
+            total_accuracy += (model_output.max(1)[1] == target_labels).sum().item()
+            robust_accuracy = (output_probs.max(1)[1] == target_labels).sum().item()
+            clean_accuracy = (adv_output.max(1)[1] == target_labels).sum().item()
+            samples_processed += target_labels.size(0)
 
-            if adv_acc / clean_acc < args.EMA_value:
-                teacher_model.update_params(model)
-                teacher_model.apply_shadow()
+            if robust_accuracy / clean_accuracy < config.EMA_value:
+                teacher_model.update_parameters(model)
+                teacher_model.apply_shadow_weights()
 
-            scheduler.step()
-            batch_end_time = time.time()
-            epoch_time += batch_end_time - batch_start_time
+            lr_scheduler.step()
+            batch_end = time.time()
+            epoch_duration += batch_end - batch_start
 
-        init_loss.append(init_train_loss / train_n)
-        init_acc.append(init_train_acc / train_n)
-        final_loss.append(train_loss / train_n)
-        final_acc.append(train_acc / train_n)
+        initial_loss.append(initial_batch_loss / samples_processed)
+        initial_accuracy.append(initial_batch_accuracy / samples_processed)
+        training_loss.append(total_loss / samples_processed)
+        training_accuracy.append(total_accuracy / samples_processed)
 
-        lr = scheduler.get_lr()[0]
+        current_lr = lr_scheduler.get_lr()[0]
         logger.info('%d \t %.1f \t \t %.4f \t %.4f \t %.4f',
-                    epoch, epoch_time, lr, train_loss / train_n, train_acc / train_n)
+                    epoch_index, epoch_duration, current_lr, total_loss / samples_processed, total_accuracy / samples_processed)
 
         logger.info('==> Building model..')
-        if args.model == "VGG":
-            model_test = VGG('VGG19').cuda()
-        elif args.model == "ResNet18":
-            model_test = ResNet18().cuda()
-        elif args.model == "PreActResNest18":
-            model_test = PreActResNet18().cuda()
-        elif args.model == "WideResNet":
-            model_test = WideResNet().cuda()
-        teacher_model = EMA(model)
-        model_test.load_state_dict(teacher_model.model.state_dict())
-        model_test.float()
-        model_test.eval()
+        if config.model == "VGG":
+            evaluation_model = VGG('VGG19').cuda()
+        elif config.model == "ResNet18":
+            evaluation_model = ResNet18().cuda()
+        elif config.model == "PreActResNest18":
+            evaluation_model = PreActResNet18().cuda()
+        elif config.model == "WideResNet":
+            evaluation_model = WideResNet().cuda()
+        teacher_model = ExponentialMovingAverage(model)
+        evaluation_model.load_state_dict(teacher_model.model.state_dict())
+        evaluation_model.float()
+        evaluation_model.eval()
 
-        eval_epsilon = (args.epsilon / 255.) / std
-        pgd_loss, pgd_acc = evaluate_powerful_pgd(test_loader, model_test, 10, 1, eval_epsilon)
-        test_loss, test_acc = evaluate_standard(test_loader, model_test)
+        eval_epsilon = (config.epsilon / 255.) / std
+        pgd_loss, pgd_accuracy = evaluate_powerful_pgd(test_loader, evaluation_model, 10, 1, eval_epsilon)
+        test_loss, test_accuracy = evaluate_standard(test_loader, evaluation_model)
 
-        epoch_clean_list.append(test_acc)
-        epoch_pgd_list.append(pgd_acc)
+        epoch_clean_list.append(test_accuracy)
+        epoch_pgd_list.append(pgd_accuracy)
 
         logger.info('Test Loss \t Test Acc \t PGD Loss \t PGD Acc')
-        logger.info('%.4f \t \t %.4f \t %.4f \t %.4f', test_loss, test_acc, pgd_loss, pgd_acc)
+        logger.info('%.4f \t \t %.4f \t %.4f \t %.4f', test_loss, test_accuracy, pgd_loss, pgd_accuracy)
 
-        if best_result <= pgd_acc:
-            best_result = pgd_acc
-            torch.save(model_test.state_dict(), os.path.join(output_path, 'best_model.pth'))
+        if best_accuracy <= pgd_accuracy:
+            best_accuracy = pgd_accuracy
+            torch.save(evaluation_model.state_dict(), os.path.join(output_directory, 'best_model.pth'))
 
-        # Save plot
-        plt.figure(figsize=(10, 5))
-        plt.plot(epoch_clean_list, label='Test Accuracy')
-        plt.plot(epoch_pgd_list, label='PGD Test Accuracy')
-        plt.xlabel('Epoch')
-        plt.ylabel('Accuracy')
-        plt.title('Test and PGD Test Accuracy over Epochs')
-        plt.legend()
-        plt.grid(True)
-        plt.savefig(os.path.join(output_path, f'accuracy_epoch_{epoch}.png'))
-        plt.close()
 
-    torch.save(model_test.state_dict(), os.path.join(output_path, 'final_model.pth'))
+    torch.save(evaluation_model.state_dict(), os.path.join(output_directory, 'final_model.pth'))
     logger.info(epoch_clean_list)
     logger.info(epoch_pgd_list)
     print(epoch_clean_list)
     print(epoch_pgd_list)
 
 if __name__ == "__main__":
-    main()
+    execute_training()
