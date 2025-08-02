@@ -24,9 +24,9 @@ logger = logging.getLogger(__name__)
 
 def parse_arguments():
     config_parser = argparse.ArgumentParser()
+    config_parser.add_argument('--epochs', default=110, type=int)
     config_parser.add_argument('--data-dir', default='CIFAR10', type=str)
     config_parser.add_argument('--batch-size', default=128, type=int)
-    config_parser.add_argument('--epochs', default=110, type=int)
     config_parser.add_argument('--lr-schedule', default='multistep', choices=['cyclic', 'multistep'])
     config_parser.add_argument('--weight-decay', default=5e-4, type=float)
     config_parser.add_argument('--momentum', default=0.9, type=float)
@@ -343,3 +343,4 @@ def execute_training():
 
 if __name__ == "__main__":
     execute_training()
+
