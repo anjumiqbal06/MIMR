@@ -14,7 +14,7 @@ def get_args():
     parser.add_argument('--data_dir', type=str, default='./data')
     parser.add_argument('--norm', type=str, default='Linf')
     parser.add_argument('--epsilon', type=int, default=8)
-    parser.add_argument('--model_path', type=str, default='D:/2nd paper code/MIMR/train_fgsm_RS_output/cifar100/factor_0.5/EMA_value_0.55/lamda_42/final_model.pth')
+    parser.add_argument('--model_path', type=str, default='/final_model.pth')
     parser.add_argument('--model', default='ResNet18', type=str, help='model name')
     parser.add_argument('--n_ex', type=int, default=10000)
     parser.add_argument('--batch_size', type=int, default=500)
