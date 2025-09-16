@@ -13,7 +13,7 @@ def get_args():
     parser.add_argument('--data_dir', type=str, default='./data')
     parser.add_argument('--norm', type=str, default='Linf')
     parser.add_argument('--epsilon', type=int, default=8)
-    parser.add_argument('--model_path', type=str, default='D:/New_MGFAT/train_fgsm_RS_output/Ours/epsilon_8/alpha_8/model_ResNet18/factor_0.7/length_4/EMA_value_0.82/lamda_12/best_model.pth')
+    parser.add_argument('--model_path', type=str, default='/best_model.pth')
     parser.add_argument('--model', default='ResNet18', type=str, help='model name')
     parser.add_argument('--n_ex', type=int, default=10000)
     parser.add_argument('--batch_size', type=int, default=500)
